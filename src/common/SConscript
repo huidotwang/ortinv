@@ -1,0 +1,11 @@
+Import('env')
+Import('opk_inc')
+
+lib_env = env.Clone()
+
+lib_common = lib_env.Library('common',['sinc.c', 'Grid.c'])
+# common library
+lib_env.Append(CPPPATH=[opk_inc])
+lib_opk = lib_env.Library('opkutil',['optimpackutil.c'])
+
+Return('lib_common', 'lib_opk')

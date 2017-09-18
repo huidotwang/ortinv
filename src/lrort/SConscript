@@ -1,0 +1,36 @@
+Import('*')
+
+mpicc = compiler['mpicc']
+mpicxx = compiler['mpicxx']
+
+env_ort = env.Clone()
+
+# lowrank decomposition library
+env_ort.Append(CPPPATH=[eigen_inc])
+env_ort.Library('vecmatop',['vecmatop.cc'])
+
+env_ort.Library('sample',['sample.cc'])
+
+# Pseudo-spectral related library
+env_ort.Append(CPPPATH=[fftw_inc])
+env_ort.Library('ortutil',['rsf_wrapper.c', 'localdisk_helper.c', 'FDStencil.c'])
+env_ort.Library('ps',['ts_kernel.c', 'abcutil.c'])
+
+env_ort.Prepend(LIBPATH=[fftw_lib])
+env_ort.Append(LIBS=['sample', 'vecmatop', 'ps', 'fftw3f_omp', 'fftw3f', 'common', libs])
+bin_ort = env_ort.Program('mpilrortmod.x', ['Mmpiortmod.cc'], CXX=mpicxx)
+bin_ort_op = env_ort.Program('lrortop.x', ['Mlrortop.cc'])
+
+# # ORT FWI related library
+env_ort.Append(CPPPATH=[hilbert_inc, fftw_inc])
+env_ort.Library('misfit',['misfit.c'])
+env_ort.Library('ortfwi',['fwiutil.cc'], CXX=mpicxx)
+
+# env_ort['CFLAGS'] += ' -DSF_HAS_ENVELOPE '
+# env_ort['CFLAGS'] += ' -DSF_HAS_XCOR '
+env_ort.Prepend(CPPPATH=[opk_inc])
+env_ort.Prepend(LIBPATH=[opk_lib, fftw_lib, hilbert_lib])
+env_ort.Prepend(LIBS=['sample', 'vecmatop', 'ps', 'ortfwi', 'misfit', 'ortutil', 'hilbertf', 'fftw3f_omp', 'fftw3f', 'opkutil', 'opk'])
+bin_ortfwi = env_ort.Program('mpilrortfwi_dat.x',['Mmpiortfwi.cc'], CXX=mpicxx)
+
+Return('bin_ort', 'bin_ortfwi','bin_ort_op')
