@@ -1,0 +1,195 @@
+from rsf.proj import *
+from rsf.recipes import wplot, geom, awe
+import math as m
+import sys
+sys.path.append('../../bin/')
+import anisotropy as aniso
+import util
+import pltutil
+import seputil
+import lrutil
+
+par = dict(
+    # nz=150, dz=0.025, oz=0.0, lz='Z', uz='km',
+    # nx=180, dx=0.05, ox=3.0, lx='X', ux='km',
+    # ny=180, dy=0.05, oy=3.0, ly='Y', uy='km',
+    nz=36, dz=0.025, oz=0.0, lz='Z', uz='km',
+    nx=100, dx=0.025, ox=6.0, lx='X', ux='km',
+    ny=100, dy=0.025, oy=6.0, ly='Y', uy='km',
+    # nt=3072, dt=0.0012, ot=0, lt='t', ut='s',
+    nt=3072, dt=0.001, ot=0, lt='t', ut='s',
+    kt=160, verb='y', snap='n', nb=14, ns=25,
+    seed=101010, eps=1e-4, npk=20,
+    localdatapath='/localscratch',
+    xlb=1.50, xub=3.50,
+    pi=m.pi
+    )
+wplot.param(par)
+
+# plot rules
+plotT  ='window | scale axis=123 |' + wplot.waveplot('',par)
+plotW3D='window j4=100 | byte gainpanel=a pclip=99 |'+wplot.igrey4d('flat=y point2=0.618 point1=0.618',par)
+plotD3D='transp memsize=20000 | put n2=%(nx)d n3=%(ny)d | byte gainpanel=a pclip=99 |' %par+ wplot.dgrey3d('flat=n point2=0.618 point1=0.618',par)
+plotimg3D = 'byte pclip=100 gainpanel=a | ' + wplot.igrey3d('flan=n',par)
+pltV3D = 'byte gainpanel=a pclip=100 polarity=y mean=y | ' + wplot.igrey3d('flat=n point1=0.618 point2=0.618 color=e ', par)
+pltV3D_flat = 'byte gainpanel=a pclip=100 polarity=y mean=y | ' + wplot.igrey3d('flat=y color=e ', par)
+
+# =============================
+mvarsDict = dict(
+        del1='over_del1', del2='over_del2', del3='over_del3',
+        eps1='over_eps1', eps2='over_eps2',
+        vnmo1='over_vnmo1', vnmo2='over_vnmo2', vnmo3='over_vnmo3',
+        vpz='over_vpz', vpx='over_vpx', vpy='over_vpy',
+        vpa1='over_vpa1', vpa2='over_vpa2', vpa3='over_vpa3',
+        vpr='over_vpr',)
+Flow('over_vpz','overthrust',
+    '''window j1=2 j2=2 j3=2 n2=%(nx)d n3=%(ny)d n1=%(nz)d f2=240 f3=240
+    | math output="input*1.5/2.55428"
+    | put d1=%(dz)g d2=%(dx)g d3=%(dy)g
+    '''%par)
+mBuilder = aniso.modelBuilder(par, 'over_vpz')
+mBuilder.run(mvarsDict)
+# Flow(mvarsDict['vpr'], mvarsDict['vpz'],'''smooth rect1=5 rect2=5 rect3=5 repeat=5''')
+Flow(mvarsDict['vpr'], mvarsDict['vpz'],'''put''')
+
+Flow('mvars_', [ mvarsDict['vpz'], mvarsDict['vpx'], mvarsDict['vpy'], mvarsDict['vnmo1'], mvarsDict['vnmo2'], mvarsDict['vnmo3'], mvarsDict['vpr']],
+    '''
+    cat axis=4 ${SOURCES[1:-1]}
+    ''',stdin=-1)
+
+par['nz'] += 4
+Flow('water_layer','mvars_','window n1=4 | math output=1.5')
+Flow('midlayer','mvars_',
+    '''
+    window n1=1 | spray axis=1 n=12 d=1 o=0
+    | math output="(input-1.5)*sin(x1*%(pi)g/24.0)+1.5"
+    | put d1=%(dz)g o1=%(oz)g
+    ''' % par)
+# Flow('mvars__','water_layer mvars_','cat axis=1 ${SOURCES[1]}')
+# Flow('layer1','mvars__','window n1=8 | smooth rect1=2 repeat=8 | window n1=8')
+# Flow('layer2','mvars__','window f1=8')
+# Flow('mvars','layer1 layer2','cat axis=1 ${SOURCES[1]}')
+Flow('mvars','water_layer midlayer mvars_','cat axis=1 ${SOURCES[1:-1]}')
+par['nz'] += 12
+pltutil.plt3x2(par, 'mvars', '', pclip=100, flat=False, needBound=True)
+Result('vpz', 'mvars', 'window n4=1 | ' + pltV3D + ' title="Actual Vpz"')
+Result('vpr', 'mvars', 'window n4=1 f4=6 | ' + pltV3D + ' title="Reference velocity"')
+
+# Flow('mvars_smooth','mvars','smooth rect1=4 rect2=4 rect3=4 repeat=2')
+Flow('mvars_smooth','mvars','smooth rect1=4 rect2=4 rect3=4 repeat=1')
+pltutil.plt3x2(par, 'mvars_smooth', '', pclip=100, flat=False, needBound=True)
+Flow('vpr_smooth','mvars_smooth','window n4=1 f4=6')
+Flow('mvars_smooth_vpr','mvars vpr_smooth','window n4=6 | cat axis=4 ${SOURCES[1]}')
+
+# Flow('zeros','mvars','window n1=4 n4=6 | math output=0')
+# Flow('ones','mvars','window f1=12 n4=6 | math output=1')
+# Flow('sins','mvars','window n1=8 n4=6 | put d1=1 | math output="sin(x1/16.0 * %(pi)g)"' % par)
+# Flow('smoothmask','zeros sins ones','cat axis=1 ${SOURCES[1:-1]}')
+# Flow('other_mask','mvars','window n4=5 | math output=0')
+# Flow('mask','smoothmask other_mask','window n4=1 | cat axis=4 ${SOURCES[1]}')
+# pltutil.plt3x2(par, 'mask', '', pclip=100, flat=False, needBound=False)
+
+Flow('zeros','mvars','window n1=4 n4=6 | math output=0')
+Flow('ones','mvars','window f1=4 n4=6 | math output=1')
+Flow('water_mask_','zeros ones','cat axis=1 ${SOURCES[1:-1]}')
+Flow('water_mask','water_mask_','window n4=1')
+Flow('other_mask','mvars','window n4=5 | math output=0')
+Flow('mask','water_mask other_mask','window n4=1 | cat axis=4 ${SOURCES[1]}')
+pltutil.plt3x2(par, 'mask', '', pclip=100, flat=False, needBound=False)
+
+
+# v(z) initial model
+par['g'] =  0.0256 / 0.05
+Flow('mvars0_','mvars','window f1=4 | put o1=0 | math output="1.5 + x1 * %(g)g"' % par)
+Flow('mvars0_vpz','water_layer mvars0_','cat axis=1 ${SOURCES[1]} | window n4=1')
+Flow('mvars0_other','mvars_smooth_vpr','window n4=6 f4=1')
+Flow('mvars0_other_smooth','mvars_smooth','window n4=6 f4=1')
+# Flow('mvars0','mvars0_vpz mvars0_other','cat axis=4 ${SOURCES[1]}')
+Flow('mvars0','mvars0_vpz mvars0_other_smooth','cat axis=4 ${SOURCES[1]}')
+Result('vpz0', 'mvars0', 'window n4=1 | ' + pltV3D + ' title="Initial Vpz"')
+pltutil.plt3x2(par, 'mvars0', '', pclip=100, flat=False, needBound=True)
+
+# ------------------------------------------------------------
+# wavelet
+awe.wavelet('src_wav_',10,'',par)
+Flow('src_wav','src_wav_','scale rscale=1e6')
+Result('src_wav_','window |' + wplot.waveplot('',par))
+if par['ns'] > 1:
+    Flow('src_wav-ns','src_wav','transp | spray axis=2 n=%(ns)d | transp |window'%par)
+else:
+    Flow('src_wav-ns','src_wav','put')
+
+# injection point
+geom.point3d('ss3D',
+             0.128*par['dx']*par['nx']+par['ox'],
+             0.5*par['ny']*par['dy']+par['oy'],
+             par['oz'],'',par)
+# util.boxSources('box_source', par,
+                # par['nx']/2+par['nx']/10, par['ny']/2+par['ny']/10, par['oz'],
+                # xradius=2, yradius=2,
+                # jx=16, jy=16,
+                # needplot=True)
+util.horizontal3d('box_source', par['oz'], par, 5, 5, 16, 16, par['nx']/6, par['ny']/6)
+splot = util.srplot2d(par)
+Result('box_source', splot.plot2d(''))
+geom.ZXsheet3d('rr3D_front', par['oy'], '', par, jx=1, jz=1)
+geom.ZXsheet3d('rr3D_rear', par['oy']+par['dy']*(par['ny']-1), '', par, jx=1, jz=1)
+geom.YZsheet3d('rr3D_lft', par['ox'], '', par, jy=1, jz=1)
+geom.YZsheet3d('rr3D_rht', par['ox']+par['dx']*(par['nx']-1), '', par, jy=1, jz=1)
+geom.XYsheet3d('rr3D_top', par['oz'], '', par, jx=1, jy=1)
+geom.XYsheet3d('rr3D_bot', par['oz']+par['dz']*(par['nz']-1), '', par, jx=1, jy=1)
+# Flow('rr3D','rr3D_top','put')
+Flow('rr3D','rr3D_top rr3D_bot rr3D_lft rr3D_rht rr3D_front rr3D_rear','cat ${SOURCES[1:-1]} axis=2')
+# Flow('rr3D','rr3D_top','put')
+
+Flow('ss3D-ns', 'box_source', 'put')
+Flow('rr3D-ns', 'rr3D', 'spray axis=3 n=%(ns)d'%par)
+
+# -- one shot test
+lrutil.runMod(par, 'src_wav', 'ss3D', 'rr3D', 'mvars', 'dobs', '')
+
+# -- multiple shot inversion
+# seputil.runMod(par, 'src_wav-ns', 'ss3D-ns', 'rr3D-ns', 'mvars_smooth_vpr', 'dobs-ns_sep', '')
+# Result('dobs-ns','window n3=1 f3=10 |' + plotD3D)
+# Result('wflobs-ns',plotW3D)
+
+# -- 0-2 Hz
+# seputil.runFwi(par, 'src_wav-ns', 'ss3D-ns', 'rr3D-ns', 'mvars0', 'dobs-ns_sep', 'mask', 2, 16)
+# Flow('dat_logfile','dat_intermediateX_0To2','window n5=1 f5=9')
+# pltutil.plt3x2(par, 'dat_logfile', '', pclip=100, flat=False, needBound=True)
+# Result('dat_vpz', 'dat_intermediateX_0To2', 'window n4=1 n5=1 f5=2 | ' + pltV3D + ' title="intermediate Vpz"')
+
+# -- 0-4 Hz
+# Flow('mvars02','dat_logfile vpr_smooth','cat axis=4 ${SOURCES[1]}')
+# seputil.runFwi(par, 'src_wav-ns', 'ss3D-ns', 'rr3D-ns', 'mvars02', 'dobs-ns_sep', 'mask', 4, 16)
+# Flow('dat_logfile2','dat_intermediateX_0To4','window n5=1 f5=7')
+# pltutil.plt3x2(par, 'dat_logfile2', '', pclip=100, flat=False, needBound=True)
+# Result('dat_vpz', 'dat_intermediateX_0To4', 'window n4=1 n5=1 f5=5 | ' + pltV3D + ' title="intermediate Vpz"')
+
+# -- 0-6 Hz
+# Flow('mvars04','dat_logfile2 vpr_smooth','cat axis=4 ${SOURCES[1]}')
+# seputil.runFwi(par, 'src_wav-ns', 'ss3D-ns', 'rr3D-ns', 'mvars04', 'dobs-ns_sep', 'mask', 6, 16)
+# Flow('dat_logfile3','dat_intermediateX_0To6','window n5=1 f5=15')
+# pltutil.plt3x2(par, 'dat_logfile3', '', pclip=100, flat=False, needBound=True)
+# Result('dat_vpz', 'dat_intermediateX_0To6', 'window n4=1 n5=1 f5=4 | ' + pltV3D + ' title="intermediate Vpz"')
+
+# -- 0-8 Hz
+# # Flow('mvars06','dat_logfile3 vpr_smooth','cat axis=4 ${SOURCES[1]}')
+# seputil.runFwi(par, 'src_wav-ns', 'ss3D-ns', 'rr3D-ns', 'mvars06', 'dobs-ns_sep', 'mask', 8, 32)
+# Flow('dat_logfile4','dat_intermediateX_0To8','window n5=1 f5=31')
+# pltutil.plt3x2(par, 'dat_logfile4', '', pclip=100, flat=False, needBound=True)
+# Result('dat_vpz', 'dat_intermediateX_0To8', 'window n4=1 n5=1 f5=4 | ' + pltV3D + ' title="intermediate Vpz"')
+
+# -- 0-10 Hz
+# Flow('mvars08','dat_X_0To8 vpr_smooth','cat axis=4 ${SOURCES[1]}')
+# seputil.runFwi(par, 'src_wav-ns', 'ss3D-ns', 'rr3D-ns', 'mvars08', 'dobs-ns_sep', 'mask', 10, 64)
+# Flow('dat_logfile5','dat_intermediateX_0To10','window n5=1 f5=64')
+# pltutil.plt3x2(par, 'dat_logfile5', '', pclip=100, flat=False, needBound=True)
+# Result('dat_vpz', 'dat_intermediateX_0To10', 'window n4=1 n5=1 f5=4 | ' + pltV3D + ' title="intermediate Vpz"')
+
+# lrutil.runMod(par, 'src_wav-ns', 'ss3D-ns', 'rr3D-ns', 'mvars', 'dobs-ns_lr', '')
+# lrutil.runFwi(par, 'src_wav-ns', 'ss3D-ns', 'rr3D-ns', 'mvars0', 'dobs-ns_lr', 'water_layer_mask', 2, 16)
+# Result('dat_vpz', 'dat_intermediateX_0To2', 'window n4=1 n5=1 f5=15 | ' + pltV3D + ' title="intermediate Vpz"')
+
+End()
+

@@ -1,0 +1,108 @@
+from rsf.proj import *
+from rsf.recipes import wplot, geom, awe, pplot
+import sys
+sys.path.append('./')
+from lrortop import lrortop
+
+par = dict(
+    # nz=,   dz=0.01,  oz=0.0, lz='z', uz='km',
+    # nx=128,   dx=0.01,  ox=0.0, lx='x', ux='km',
+    # ny=128,   dy=0.01,  oy=0.0, ly='y', uy='km',
+    # nt=1501, dt=0.0005, ot=0, lt='t', ut='s',
+    # kt=101, abc='y', nb=16, verb='y', free='n',
+    # seed=2020, eps=1e-4, npk=30, snap='n'
+    nz=200,   dz=0.01,  oz=0.0, lz='z', uz='km',
+    nx=200,   dx=0.01,  ox=0.0, lx='x', ux='km',
+    ny=200,   dy=0.01,  oy=0.0, ly='y', uy='km',
+    nt=1024, dt=0.001, ot=0, lt='t', ut='s',
+    kt=68, abc='y', nb=28, verb='y', snap='n',
+    seed=101010, eps=1e-4, npk=32,
+    )
+wplot.param(par)
+# ------------------------------------------------------------
+# wavelet
+awe.wavelet('wav',20,'',par)
+Result('wav','window |' + wplot.waveplot('',par))
+
+# injection point
+# geom.point3d('ss3D',0.50*par['dx'], par['dy'], 0.33*par['dz'],'',par)
+geom.point3d('ss3D',0.50*par['dx']*par['nx']+par['ox'], 
+            0.50*par['dy']*par['ny']+par['oy'],
+            0.50*par['dz']*par['nz']+par['oz'],
+            '',par)
+geom.horizontal3d('rr3D',par['oz'],'',par)
+
+
+# ------------------------------------------------------------
+Flow('vpz',None,'''
+    math output="2.25"
+    n1=%(nz)d o1=%(oz)g d1=%(dz)g label1=%(lz)s unit1=%(uz)s
+    n2=%(nx)d o2=%(ox)g d2=%(dx)g label2=%(lx)s unit2=%(ux)s 
+    n3=%(ny)d o3=%(oy)g d3=%(dy)g label3=%(ly)s unit3=%(uy)s 
+    '''%par)
+Result('vpz',wplot.igrey2d('mean=y',par))
+  
+Flow('eps1','vpz','math output="0.256"')
+Flow('eps2','vpz','math output="0.384"')
+Flow('del1','vpz','math output="0.16"')
+Flow('del2','vpz','math output="0.20"')
+Flow('del3','vpz','math output="0.08"')
+Flow('eta1','eps1 del1','math e=${SOURCES[0]} d=${SOURCES[1]} output="(e-d)/(1+2*d)"')
+Flow('eta2','eps2 del2','math e=${SOURCES[0]} d=${SOURCES[1]} output="(e-d)/(1+2*d)"')
+Flow('vpx','vpz eps2','math v=${SOURCES[0]} e=${SOURCES[1]} output="v*sqrt(1+2*e)"')
+Flow('vpy','vpz eps1','math v=${SOURCES[0]} e=${SOURCES[1]} output="v*sqrt(1+2*e)"')
+Flow('vn1','vpz del1','math v=${SOURCES[0]} d=${SOURCES[1]} output="v*sqrt(1+2*d)"')
+Flow('vn2','vpz del2','math v=${SOURCES[0]} d=${SOURCES[1]} output="v*sqrt(1+2*d)"')
+Flow('vn3','vpx del3','math v=${SOURCES[0]} d=${SOURCES[1]} output="v*sqrt(1+2*d)"')
+Flow('vpr','vpz vpx vpy','''
+    math vz=${SOURCES[0]} vx=${SOURCES[1]} vy=${SOURCES[2]} 
+    output="(vz*vx*vy)^(1./3.)"
+    ''')
+#| smooth rect1=5 rect2=5 repeat=3
+Flow('mvars','vpz vpx vpy vn1 vn2 vn3 vpr','cat axis=4 ${SOURCES[1:-1]}')
+
+# DOT PRODUCT TEST
+# ------------------------------------------------------------
+# plot rules
+plotT  ='window | scale axis=123 |' + wplot.waveplot('',par)
+plotW3D='window j4=200 | byte gainpanel=a pclip=99 |'+wplot.igrey4d('flat=n point2=0.618 point1=0.618',par)
+plotD3D='transp | byte gainpanel=a pclip=99 |' + wplot.dgrey3d('flat=n point2=0.618 point1=0.618',par)
+
+# Flow('m3Da','wav','''
+    # spray axis=1 n=%(nz)d d=%(dz)g o=%(oz)g label=%(lz)s unit=%(uz)s |
+    # spray axis=2 n=%(nx)d d=%(dx)g o=%(ox)g label=%(lx)s unit=%(ux)s | 
+    # spray axis=3 n=%(ny)d d=%(dy)g o=%(oy)g label=%(ly)s unit=%(uy)s |
+    # window
+    # '''%par)
+Flow('m3Db','wav','window squeeze=n')
+# Flow('m3Dc','m3Da','put')
+Flow('m3Dd','wav'  ,'window squeeze=n')
+
+A3Da = dict(op=lrortop, tag='3Da', ss='', rr='', plotm=plotT, plotd=plotW3D)
+A3Db = dict(op=lrortop, tag='3Db', ss='ss3D', rr='', plotm=plotT, plotd=plotW3D)
+A3Dc = dict(op=lrortop, tag='3Dc', ss='', rr='rr3D', plotm=plotT, plotd=plotD3D)
+A3Dd = dict(op=lrortop, tag='3Dd', ss='ss3D', rr='rr3D', plotm=plotT, plotd=plotD3D)
+
+# for DICT in [A3Dd]:
+for DICT in [A3Db]:
+
+    G=DICT['op']('mvars',DICT['ss'],DICT['rr'], par)
+
+    # G.FORW( 'm'+DICT['tag'],'d'+DICT['tag']+'_wobd_wfl')
+
+    # D=DPT(G,'m'+DICT['tag'],'d'+DICT['tag'])
+    # D.TEST(DICT['tag'])
+
+# Result('d3Db_wobd','window j4=200 | byte gainpanel=a pclip=100 |'+wplot.igrey4d('flat=n point2=0.618 point1=0.618 wantaxis=n',par))
+# Result('k3Db_wobd_wfl','window j4=200 | byte gainpanel=a pclip=100 |'+wplot.igrey4d('flat=n point2=0.618 point1=0.618 wantaxis=n',par))
+
+# Result('k3Db','window | ' + wplot.waveplot('max2=50255.2 min2=-50255.2',par))
+Flow('d3Db_wobd_wfl_slices','d3Db_wobd_wfl','window j4=50 | byte gainpanel=a')
+
+Result('d3Db_wobd_wfl_slices',wplot.igrey4d('flat=n point2=0.618 point1=0.618 wantaxis=n',par) )
+nslice = 20
+for islice in range(nslice):
+    tag = '_%d'%islice
+    Plot('lr_d3Db_wobd_wfl_slices'+tag,'d3Db_wobd_wfl_slices','window n4=1 f4=%d | '%islice+wplot.igrey3d('flat=n point2=0.618 point1=0.618 wantaxis=n',par))
+
+End()

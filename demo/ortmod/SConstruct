@@ -1,0 +1,104 @@
+from rsf.proj import *
+from rsf.recipes import wplot, geom, awe
+import sys
+sys.path.append('../../bin/')
+
+bin_mod = '../../bin/mpilrortmod.x'
+
+par = dict(
+    nz=64,   dz=0.01,  oz=0.0, lz='z', uz='km',
+    nx=374,   dx=0.01,  ox=0.0, lx='x', ux='km',
+    ny=64,   dy=0.01,  oy=0.0, ly='y', uy='km',
+    nt=3072, dt=0.001, ot=0, lt='t', ut='s',
+    kt=68, abc='y', nb=16, verb='y', free='n', snap='y',
+    seed=101010, eps=1e-3, npk=64,
+    ns=5,
+    )
+wplot.param(par)
+par['ort_mod'] = bin_mod
+par['mpirun'] = os.environ['MPIRUN']
+# ------------------------------------------------------------
+# wavelet
+awe.wavelet('src_wav_',20,'',par)
+Flow('src_wav','src_wav_','bandpass flo=5 phase=n | scale rscale=1e4')
+Result('src_wav','window |' + wplot.waveplot('',par))
+if par['ns'] > 1:
+    Flow('src_wav-ns','src_wav','transp | spray axis=2 n=%(ns)d | transp |window'%par)
+else:
+    Flow('src_wav-ns','src_wav','put')
+
+# injection point
+geom.point3d('ss3D',
+             0.128*par['dx']*par['nx']+par['ox'],
+             0.5*par['ny']*par['dy']+par['oy'],
+             2*par['dz'],'',par)
+
+geom.point3d('rr3D',
+             0.872*par['dx']*par['nx']+par['ox'],
+             0.5*par['ny']*par['dy']+par['oy'],
+             2*par['dz'],'',par)
+
+geom.horizontal3d('sou_',par['oz'], '', par)
+geom.horizontal3d('rec_',par['oz'], '', par)
+Flow('ss3D-ns', 'sou_', 'window n2=%(ns)d j2=16 f2=31'%par)
+Flow('rr3D-ns', 'rec_', 'spray axis=3 n=%(ns)d'%par)
+
+# true velocity
+     #math output="x1*2+1.5"
+Flow('vpz',None,'''
+     math output="x1*3+1.5"
+     n1=%(nz)d o1=%(oz)g d1=%(dz)g label1=%(lz)s unit1=%(uz)s
+     n2=%(nx)d o2=%(ox)g d2=%(dx)g label2=%(lx)s unit2=%(ux)s 
+     n3=%(ny)d o3=%(oy)g d3=%(dy)g label3=%(ly)s unit3=%(uy)s 
+     '''%par)
+Result('vpz',wplot.igrey2d('mean=y',par))
+
+Flow('vpx','vpz','math output="input*sqrt(1.0+2.0*(x1*0.05+0.038))"')
+Flow('vpy','vpz','math output="input*sqrt(1.0+2.0*(x1*0.05+0.038))"')
+Flow('vpn1','vpz','math output="input*sqrt(1.0+2.0*(x1*0.038+0.038))"')
+Flow('vpn2','vpz','math output="input*sqrt(1.0+2.0*(x1*0.038+0.038))"')
+Flow('vpn3','vpz','math output="input*sqrt(1.0+2.0*(x1*0.038+0.038))"')
+# Flow('mvars','vpz vpx vpy vpn1 vpn2 vpn3','cat axis=4 ${SOURCES[1:-1]}')
+Flow('vpa1','vpn1 vpy','math pn=${SOURCES[0]} p=${SOURCES[1]} output="sqrt(pn * p)"')
+Flow('vpa2','vpn2 vpy','math pn=${SOURCES[0]} p=${SOURCES[1]} output="sqrt(pn * p)"')
+Flow('vpa3','vpn3 vpz','math pn=${SOURCES[0]} p=${SOURCES[1]} output="sqrt(pn * p)"')
+Flow('vpr','vpz vpx vpy','''
+    math vz=${SOURCES[0]} vx=${SOURCES[1]} vy=${SOURCES[2]} 
+         output="(vz*vx*vy)^(1./3.)"
+    ''')
+    #| smooth rect1=5 rect2=5 repeat=3
+
+Flow('mvars','vpz vpx vpy vpn1 vpn2 vpn3 vpr','cat axis=4 ${SOURCES[1:-1]}')
+
+# plot rules
+plotT  ='window | scale axis=123 |' + wplot.waveplot('',par)
+plotW3D='window j4=100 | byte gainpanel=a pclip=99 |'+wplot.igrey4d('flat=n point2=0.618 point1=0.618',par)
+plotD3D='transp memsize=20000 | put n2=%(nx)d n3=%(ny)d n4=%(ns)d | byte gainpanel=a pclip=99 |' %par+ wplot.dgrey3d('flat=n point2=0.618 point1=0.618',par)
+plotimg3D = 'byte pclip=100 gainpanel=a | ' + wplot.igrey3d('flan=n',par)
+
+def runMod(par, srcWav, sou, rec, mvars, odat, owfl=''):
+    targets = [odat]
+    owfl_str = ' '
+    if owfl:
+        targets += [owfl] 
+        owfl_str += ' owfl=${TARGETS[1]} '
+    Flow(targets, [srcWav, sou, rec, mvars],'''
+        %(mpirun)s %(ort_mod)s
+        input=${SOURCES[0]} output=${TARGETS[0]}
+        sou=${SOURCES[1]} rec=${SOURCES[2]}
+        model=${SOURCES[3]}
+        verb=%(verb)s nb=%(nb)d snap=%(snap)s
+        seed=%(seed)d npk=%(npk)d eps=%(eps)g
+        '''%par + owfl_str)
+# runMod(par, 'src_wav', 'ss3D', 'rr3D', 'mvars', 'dobs', 'wflobs')
+# runMod(par, 'src_wav', 'ss3D', 'rr3D', 'mvars', 'dobs', '')
+# Result('dobs',plotT)
+Result('wflobs',plotW3D)
+
+# runMod(par, 'src_wav-ns', 'ss3D-ns', 'rr3D-ns', 'mvars', 'dobs-ns', 'wflobs-ns')
+# runMod(par, 'src_wav-ns', 'ss3D-ns', 'rr3D-ns', 'mvars', 'dobs-ns', '')
+# Result('dobs-ns',plotD3D)
+# Result('wflobs-ns',plotW3D)
+
+End()
+
